@@ -1,0 +1,8 @@
+#![allow(non_snake_case, mixed_script_confusables)]
+#![feature(non_ascii_idents)]
+
+#[macro_use]
+extern crate lazy_static;
+
+pub mod abe;
+pub mod schnorr;

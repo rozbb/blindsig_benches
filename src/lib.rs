@@ -5,4 +5,5 @@
 extern crate lazy_static;
 
 pub mod abe;
+mod common;
 pub mod schnorr;

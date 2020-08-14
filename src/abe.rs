@@ -80,17 +80,16 @@
 *   return ω + δ == H₃(ζ, ζ₁, g^ρ y^ω, g^σ₁ ζ₁^δ, h^σ₂ (ζ/ζ₁)^δ, z^μ ζ^δ, m):
 */
 
+use crate::common::{GroupElem, Scalar};
+
 use blake2::{crypto_mac::Mac, digest::Digest, Blake2b};
 use curve25519_dalek::{
     constants::RISTRETTO_BASEPOINT_TABLE,
-    ristretto::{CompressedRistretto, RistrettoBasepointTable, RistrettoPoint},
+    ristretto::{RistrettoBasepointTable, RistrettoPoint},
     scalar::Scalar as ScalarRepr,
 };
 use rand::{CryptoRng, RngCore};
-use serde::{
-    de::{Error, Visitor},
-    Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::{Deserialize, Serialize};
 
 lazy_static! {
     // This is h in the above notation
@@ -102,83 +101,6 @@ lazy_static! {
     static ref H1: Blake2b = Blake2b::new_varkey(b"Abe Blind Sig Oracle 1").unwrap();
     static ref H2: Blake2b = Blake2b::new_varkey(b"Abe Blind Sig Oracle 2").unwrap();
     static ref H3: Blake2b = Blake2b::new_varkey(b"Abe Blind Sig Oracle 3").unwrap();
-}
-
-struct ThirtyTwoBytesVisitor;
-
-impl<'de> Visitor<'de> for ThirtyTwoBytesVisitor {
-    type Value = [u8; 32];
-
-    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-        write!(formatter, "a bytestring of length 32")
-    }
-
-    fn visit_bytes<E>(self, b: &[u8]) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        if b.len() == 32 {
-            let mut buf = [0u8; 32];
-            buf.copy_from_slice(b);
-            Ok(buf)
-        } else {
-            Err(serde::de::Error::invalid_length(b.len(), &"32 bytes"))
-        }
-    }
-}
-
-fn serialize_ristretto_point<S: Serializer>(
-    point: &RistrettoPoint,
-    ser: S,
-) -> Result<S::Ok, S::Error> {
-    let bytes = point.compress().to_bytes();
-    ser.serialize_bytes(&bytes)
-}
-
-fn deserialize_ristretto_point<'de, D: Deserializer<'de>>(
-    de: D,
-) -> Result<RistrettoPoint, D::Error> {
-    let bytes = de.deserialize_bytes(ThirtyTwoBytesVisitor)?;
-    let compressed = CompressedRistretto::from_slice(&bytes);
-
-    let point = compressed
-        .decompress()
-        .expect("encountered an invalid Ristretto point");
-    Ok(point)
-}
-
-#[derive(Copy, Clone, Deserialize, Serialize)]
-struct GroupElem(
-    #[serde(
-        serialize_with = "serialize_ristretto_point",
-        deserialize_with = "deserialize_ristretto_point"
-    )]
-    RistrettoPoint,
-);
-
-fn serialize_scalar<S: Serializer>(scalar: &ScalarRepr, ser: S) -> Result<S::Ok, S::Error> {
-    ser.serialize_bytes(scalar.as_bytes())
-}
-
-fn deserialize_scalar<'de, D: Deserializer<'de>>(de: D) -> Result<ScalarRepr, D::Error> {
-    let bytes = de.deserialize_bytes(ThirtyTwoBytesVisitor)?;
-    let scalar = ScalarRepr::from_canonical_bytes(bytes).expect("encountered an invalid scalar");
-    Ok(scalar)
-}
-
-#[derive(Copy, Clone, Deserialize, Serialize)]
-struct Scalar(
-    #[serde(
-        serialize_with = "serialize_scalar",
-        deserialize_with = "deserialize_scalar"
-    )]
-    ScalarRepr,
-);
-
-impl Scalar {
-    fn random<R: CryptoRng + RngCore>(rng: &mut R) -> Scalar {
-        Scalar(ScalarRepr::random(rng))
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -239,8 +161,8 @@ pub fn verify(pubkey: &Pubkey, m: &[u8], sig: &Signature) -> bool {
     // return (ζ, ζ₁, ρ, ω, σ₁, σ₂, δ, μ)
     let h = ScalarRepr::from_hash(
         H3.clone()
-            .chain(ζ.0.compress().to_bytes())
-            .chain(ζ1.0.compress().to_bytes())
+            .chain(ζ.to_bytes())
+            .chain(ζ1.to_bytes())
             .chain(α.compress().to_bytes())
             .chain(β1.compress().to_bytes())
             .chain(β2.compress().to_bytes())
@@ -363,8 +285,8 @@ pub fn client1<R: RngCore + CryptoRng>(
     let η = τ.0 * z.0;
     let ε = ScalarRepr::from_hash(
         H3.clone()
-            .chain(ζ.0.compress().to_bytes())
-            .chain(ζ1.0.compress().to_bytes())
+            .chain(ζ.to_bytes())
+            .chain(ζ1.to_bytes())
             .chain(α.compress().to_bytes())
             .chain(β1.compress().to_bytes())
             .chain(β2.compress().to_bytes())
@@ -433,7 +355,7 @@ pub struct Signature {
 
 pub fn client2(
     pubkey: &Pubkey,
-    client_state: &ClientState,
+    state: &ClientState,
     m: &[u8],
     server_resp2: &ServerResp2,
 ) -> Option<Signature> {
@@ -449,7 +371,7 @@ pub fn client2(
         t3,
         t4,
         t5,
-    } = client_state;
+    } = state;
     let ServerResp2 { r, c, s1, s2, d } = server_resp2;
 
     // ρ := r + t₁

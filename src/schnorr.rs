@@ -48,148 +48,156 @@
 *   return s'G == R' + c'X
 */
 
+use crate::common::{GroupElem, Scalar};
+
 use blake2::{digest::Digest, Blake2b};
-use curve25519_dalek::{
-    constants::RISTRETTO_BASEPOINT_TABLE,
-    ristretto::{CompressedRistretto, RistrettoPoint},
-    scalar::Scalar,
-};
+use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, scalar::Scalar as ScalarRepr};
 use rand::{CryptoRng, RngCore};
 
-type Privkey = Scalar;
-type Pubkey = RistrettoPoint;
+pub struct Privkey(Scalar);
+pub struct Pubkey(GroupElem);
 
-// Used in protocol step 1
-type Nonce = Scalar;
-type Com = RistrettoPoint;
-type SerializedCom = [u8; 32];
+pub struct ServerState {
+    r: Scalar,
+}
 
-// Used in protocol step 2
-type BlindingFactor = Scalar;
-type Challenge = Scalar;
-type SerializedChallenge = [u8; 32];
+pub struct ServerResp1 {
+    R: GroupElem,
+}
 
-// Used in protocol step 3
-type Resp = Scalar;
-type SerializedResp = [u8; 32];
+pub struct ClientState {
+    α: Scalar,
+    β: Scalar,
+    c: Scalar,
+    R: GroupElem,
+    R_prime: GroupElem,
+}
+
+pub struct ClientResp {
+    c: Scalar,
+}
+
+pub struct ServerResp2 {
+    s: Scalar,
+}
 
 // Used in protocol step 4
-type Signature = (Com, Resp);
+pub struct Signature {
+    R_prime: GroupElem,
+    s_prime: Scalar,
+}
 
 /// Generates a Schnorr keypair
 pub fn keygen<R: RngCore + CryptoRng>(rng: &mut R) -> (Privkey, Pubkey) {
-    // x ← ℤ/ℓℤ where ℓ is the group order. We don't care about cofactors here because Ristretto
+    // sk ← ℤ/ℓℤ where ℓ is the group order. We don't care about cofactors here because Ristretto
     // is a prime-order curve
     let x = Scalar::random(rng);
-    let X = &x * &RISTRETTO_BASEPOINT_TABLE;
+    let X = &x.0 * &RISTRETTO_BASEPOINT_TABLE;
 
-    (x, X)
+    let sk = Privkey(x);
+    let pk = Pubkey(X.into());
+
+    (sk, pk)
 }
 
 /// Verifies the signature
-pub fn verify(X: &Pubkey, m: &[u8], σ: &Signature) -> bool {
-    // σ = (R', s')
-    let (R_prime, s_prime) = σ;
+pub fn verify(pubkey: &Pubkey, m: &[u8], sig: &Signature) -> bool {
+    let Pubkey(X) = pubkey;
+    let Signature { R_prime, s_prime } = sig;
 
     // c' = H(R', m)
-    let c_prime = {
-        let mut hasher = Blake2b::default();
-        hasher.input(&R_prime.compress().to_bytes());
-        hasher.input(m);
-        let digest = hasher.result();
-        let mut truncated_digest = [0u8; 32];
-        truncated_digest.copy_from_slice(&digest[..32]);
-        Scalar::from_bits(truncated_digest)
-    };
+    let c_prime = ScalarRepr::from_hash(Blake2b::default().chain(R_prime.to_bytes()).chain(m));
 
     // Check s'G == R' + c'X
-    let s_primeG = s_prime * &RISTRETTO_BASEPOINT_TABLE;
-    s_primeG == R_prime + c_prime * X
+    let s_primeG = &s_prime.0 * &RISTRETTO_BASEPOINT_TABLE;
+    s_primeG == R_prime.0 + c_prime * X.0
 }
 
-/// Step 1 in the protocol
-/// Returns (r, R)
-pub fn server_com<R: RngCore + CryptoRng>(rng: &mut R) -> (Nonce, Com, SerializedCom) {
+pub fn server1<R: RngCore + CryptoRng>(rng: &mut R) -> (ServerState, ServerResp1) {
     // Generating a commitment is actually identical in functionality to keygen()
     // r ← S, R := rG
     let (r, R) = keygen(rng);
 
-    // Serialize the commitment R
-    let serialized_R = R.compress().to_bytes();
-    (r, R, serialized_R)
+    let state = ServerState { r: r.0 };
+    let resp = ServerResp1 { R: R.0 };
+
+    (state, resp)
 }
 
-/// Step 2 in the protocol
-/// Recieves m, X, R
-/// Returns (α, R', c)
-pub fn client_chal<R: RngCore + CryptoRng>(
+pub fn client1<R: RngCore + CryptoRng>(
     rng: &mut R,
+    pubkey: &Pubkey,
     m: &[u8],
-    X: &Pubkey,
-    serialized_R: &SerializedCom,
-) -> (BlindingFactor, Com, Challenge, SerializedChallenge) {
+    server_resp1: &ServerResp1,
+) -> (ClientState, ClientResp) {
+    let Pubkey(X) = pubkey;
+
     // Generate the blinding factors
     let α = Scalar::random(rng);
     let β = Scalar::random(rng);
 
     // Deserialize the received commitment
-    let R = CompressedRistretto::from_slice(serialized_R)
-        .decompress()
-        .expect("corrupted R");
+    let &ServerResp1 { R } = server_resp1;
+
     // Blind the commitment
     let R_prime = {
-        let αG = &α * &RISTRETTO_BASEPOINT_TABLE;
-        let βX = β * X;
-        R + αG + βX
+        let αG = &α.0 * &RISTRETTO_BASEPOINT_TABLE;
+        let βX = β.0 * X.0;
+        GroupElem(R.0 + αG + βX)
     };
 
     // Compute the hash c' = H(R', m)
-    let c_prime = {
-        let mut hasher = Blake2b::default();
-        hasher.input(&R_prime.compress().to_bytes());
-        hasher.input(m);
-        let digest = hasher.result();
-        let mut truncated_digest = [0u8; 32];
-        truncated_digest.copy_from_slice(&digest[..32]);
-        Scalar::from_bits(truncated_digest)
+    let c_prime = ScalarRepr::from_hash(Blake2b::default().chain(R_prime.to_bytes()).chain(m));
+
+    // Compute c
+    let c = Scalar(c_prime + β.0);
+
+    let state = ClientState {
+        α,
+        β,
+        c,
+        R,
+        R_prime,
     };
+    let resp = ClientResp { c };
 
-    // Compute c and serialize it
-    let c = c_prime + β;
-    let serialized_c = c.to_bytes();
-
-    (α, R_prime, c, serialized_c)
+    (state, resp)
 }
 
-/// Step 3 in the protocol
-/// Receives x, r, c
-/// Returns s
-pub fn server_resp(x: &Privkey, r: &Nonce, serialized_c: &SerializedChallenge) -> SerializedResp {
-    let c = Scalar::from_canonical_bytes(*serialized_c).expect("corrupted c");
-    let s = r + c * x;
-    s.to_bytes()
+pub fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
+    let Privkey(x) = privkey;
+    let ServerState { r } = state;
+    let ClientResp { c } = client_resp;
+    let s = Scalar(r.0 + c.0 * x.0);
+
+    ServerResp2 { s }
 }
 
-/// Step 4 in the protocol
-/// Receives c, α, R, R', X, s
-/// Returns σ
-pub fn client_unblind(
-    c: &Challenge,
-    α: &BlindingFactor,
-    R: &Com,
-    R_prime: &Com,
-    X: &Pubkey,
-    serialized_s: &SerializedCom,
-) -> Signature {
+pub fn client2(
+    pubkey: &Pubkey,
+    state: &ClientState,
+    m: &[u8],
+    server_resp2: &ServerResp2,
+) -> Option<Signature> {
+    let Pubkey(X) = pubkey;
+    let &ClientState {
+        α,
+        β,
+        c,
+        R,
+        R_prime,
+    } = state;
+    let ServerResp2 { s } = server_resp2;
+
     // Check sG == R + cX
-    let s = Scalar::from_canonical_bytes(*serialized_s).expect("corrupted s");
-    let sG = &s * &RISTRETTO_BASEPOINT_TABLE;
-    if sG != R + c * X {
-        panic!("invalid signature");
+    let sG = &s.0 * &RISTRETTO_BASEPOINT_TABLE;
+    if sG != R.0 + c.0 * X.0 {
+        return None;
     }
 
-    let s_prime = s + α;
-    (*R_prime, s_prime)
+    let s_prime = Scalar(s.0 + α.0);
+
+    Some(Signature { R_prime, s_prime })
 }
 
 #[test]
@@ -197,11 +205,11 @@ fn test_correctness() {
     let mut csprng = rand::thread_rng();
     let m = b"Hello world";
 
-    let (x, X) = keygen(&mut csprng);
-    let (r, R, serialized_R) = server_com(&mut csprng);
-    let (α, R_prime, c, serialized_c) = client_chal(&mut csprng, m, &X, &serialized_R);
-    let serialized_s = server_resp(&x, &r, &serialized_c);
-    let σ = client_unblind(&c, &α, &R, &R_prime, &X, &serialized_s);
+    let (privkey, pubkey) = keygen(&mut csprng);
+    let (server_state, server_resp1) = server1(&mut csprng);
+    let (client_state, client_resp) = client1(&mut csprng, &pubkey, m, &server_resp1);
+    let server_resp2 = server2(&privkey, &server_state, &client_resp);
+    let sig = client2(&pubkey, &client_state, m, &server_resp2).unwrap();
 
-    assert!(verify(&X, m, &σ));
+    assert!(verify(&pubkey, m, &sig));
 }

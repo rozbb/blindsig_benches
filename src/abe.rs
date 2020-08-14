@@ -190,7 +190,7 @@ pub struct ServerResp1 {
 }
 
 pub fn server1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerState, ServerResp1) {
-    let Pubkey { y, z } = pubkey;
+    let Pubkey { z, .. } = pubkey;
 
     // rnd ← {0,1}*
     // z₁ := H₂(rnd)
@@ -225,7 +225,6 @@ pub fn server1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerS
 pub struct ClientState {
     ζ: GroupElem,
     ζ1: GroupElem,
-    ζ2: GroupElem,
     γ: Scalar,
     τ: Scalar,
     t1: Scalar,
@@ -300,7 +299,6 @@ pub fn client1<R: RngCore + CryptoRng>(
     let state = ClientState {
         ζ,
         ζ1,
-        ζ2,
         γ,
         τ,
         t1,
@@ -359,11 +357,9 @@ pub fn client2(
     m: &[u8],
     server_resp2: &ServerResp2,
 ) -> Option<Signature> {
-    let Pubkey { y, z } = pubkey;
     let ClientState {
         ζ,
         ζ1,
-        ζ2,
         γ,
         τ,
         t1,

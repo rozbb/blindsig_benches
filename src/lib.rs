@@ -1,4 +1,4 @@
-#![allow(non_snake_case, mixed_script_confusables)]
+#![allow(non_snake_case, mixed_script_confusables, confusable_idents)]
 #![feature(non_ascii_idents)]
 
 #[macro_use]

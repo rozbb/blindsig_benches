@@ -67,7 +67,6 @@ pub struct ServerResp1 {
 
 pub struct ClientState {
     α: Scalar,
-    β: Scalar,
     c: Scalar,
     R: GroupElem,
     R_prime: GroupElem,
@@ -152,13 +151,7 @@ pub fn client1<R: RngCore + CryptoRng>(
     // Compute c
     let c = Scalar(c_prime + β.0);
 
-    let state = ClientState {
-        α,
-        β,
-        c,
-        R,
-        R_prime,
-    };
+    let state = ClientState { α, c, R, R_prime };
     let resp = ClientResp { c };
 
     (state, resp)
@@ -176,17 +169,10 @@ pub fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp)
 pub fn client2(
     pubkey: &Pubkey,
     state: &ClientState,
-    m: &[u8],
     server_resp2: &ServerResp2,
 ) -> Option<Signature> {
     let Pubkey(X) = pubkey;
-    let &ClientState {
-        α,
-        β,
-        c,
-        R,
-        R_prime,
-    } = state;
+    let &ClientState { α, c, R, R_prime } = state;
     let ServerResp2 { s } = server_resp2;
 
     // Check sG == R + cX
@@ -209,7 +195,7 @@ fn test_correctness() {
     let (server_state, server_resp1) = server1(&mut csprng);
     let (client_state, client_resp) = client1(&mut csprng, &pubkey, m, &server_resp1);
     let server_resp2 = server2(&privkey, &server_state, &client_resp);
-    let sig = client2(&pubkey, &client_state, m, &server_resp2).unwrap();
+    let sig = client2(&pubkey, &client_state, &server_resp2).unwrap();
 
     assert!(verify(&pubkey, m, &sig));
 }

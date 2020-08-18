@@ -1,77 +1,68 @@
 #![allow(non_snake_case, mixed_script_confusables)]
 #![feature(non_ascii_idents)]
 use criterion::{criterion_group, criterion_main, Criterion};
+use rand::{rngs::StdRng, SeedableRng};
 
-/*
-fn main() -> Result<(), std::io::Error> {
-    let matches = App::new("Benchmark Blind Schnorr")
-        .arg("<CSV_OUT> 'The file to write the benchmark data to, in CSV format'")
-        .get_matches();
-
-    let out_file = {
-        let filename = matches
-            .value_of_os("CSV_OUT")
-            .expect("no CSV filename given");
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(filename)?
-    };
-
-    let mut csprng = rand::thread_rng();
-    let m = b"Hello world";
-
-    let b = Bencher {
-        bytes: 0,
-        iterations: 0,
-        dur: 0,
-    };
-
-    let (x, X) = keygen(&mut csprng);
-    let (r, R, serialized_R) = server_com(&mut csprng);
-    let (α, R_prime, c, serialized_c) = client_chal(&mut csprng, m, &X, &serialized_R);
-    let serialized_s = server_resp(&x, &r, &serialized_c);
-    let σ = client_unblind(&c, &α, &R, &R_prime, &X, &serialized_s);
-
-    assert!(verify(&X, m, &σ));
-}
-*/
+static SESSION_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64];
 
 pub fn blind_schnorr_steps(bencher: &mut Criterion) {
-    use blind_sig_bench::schnorr::{
-        client_chal, client_unblind, keygen, server_com, server_resp, verify,
-    };
+    use blind_sig_bench::schnorr::{client1, client2, keygen, server1, server2, verify};
 
-    let mut group = bencher.benchmark_group("Blind Schnorr");
+    let mut group = bencher.benchmark_group("Sequential Blind Schnorr");
     let mut csprng = rand::thread_rng();
     let m = b"Hello world";
 
     group.bench_function("keygen", |b| b.iter(|| keygen(&mut csprng)));
-    let (x, X) = keygen(&mut csprng);
+    let (privkey, pubkey) = keygen(&mut csprng);
 
-    group.bench_function("step 1", |b| b.iter(|| server_com(&mut csprng)));
-    let (r, R, serialized_R) = server_com(&mut csprng);
+    for &num_sessions in SESSION_SIZES {
+        let bench_name = format!("step 1[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for _ in 0..num_sessions {
+                    server1(&mut csprng);
+                }
+            })
+        });
+        let (server_state, server_resp1) = server1(&mut csprng);
 
-    group.bench_function("step 2", |b| {
-        b.iter(|| client_chal(&mut csprng, m, &X, &serialized_R))
-    });
-    let (α, R_prime, c, serialized_c) = client_chal(&mut csprng, m, &X, &serialized_R);
+        let bench_name = format!("step 2[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for _ in 0..num_sessions {
+                    client1(&mut csprng, &pubkey, m, &server_resp1);
+                }
+            })
+        });
+        let (client_state, client_resp) = client1(&mut csprng, &pubkey, m, &server_resp1);
 
-    group.bench_function("step 3", |b| b.iter(|| server_resp(&x, &r, &serialized_c)));
-    let serialized_s = server_resp(&x, &r, &serialized_c);
+        let bench_name = format!("step 3[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for _ in 0..num_sessions {
+                    server2(&privkey, &server_state, &client_resp);
+                }
+            })
+        });
+        let server_resp2 = server2(&privkey, &server_state, &client_resp);
 
-    group.bench_function("step 4", |b| {
-        b.iter(|| client_unblind(&c, &α, &R, &R_prime, &X, &serialized_s))
-    });
-    let σ = client_unblind(&c, &α, &R, &R_prime, &X, &serialized_s);
+        let bench_name = format!("step 4[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for _ in 0..num_sessions {
+                    client2(&pubkey, &client_state, &server_resp2).unwrap();
+                }
+            })
+        });
+        let sig = client2(&pubkey, &client_state, &server_resp2).unwrap();
 
-    assert!(verify(&X, m, &σ));
+        assert!(verify(&pubkey, m, &sig));
+    }
 }
 
+/*
 pub fn blind_schnorr_full(bencher: &mut Criterion) {
-    use blind_sig_bench::schnorr::{
-        client_chal, client_unblind, keygen, server_com, server_resp, verify,
-    };
+    use blind_sig_bench::schnorr::{client1, client2, keygen, server1, server2};
 
     let mut group = bencher.benchmark_group("Blind Schnorr");
     let mut csprng = rand::thread_rng();
@@ -79,14 +70,140 @@ pub fn blind_schnorr_full(bencher: &mut Criterion) {
 
     group.bench_function("all steps", |b| {
         b.iter(|| {
-            let (x, X) = keygen(&mut csprng);
-            let (r, R, serialized_R) = server_com(&mut csprng);
-            let (α, R_prime, c, serialized_c) = client_chal(&mut csprng, m, &X, &serialized_R);
-            let serialized_s = server_resp(&x, &r, &serialized_c);
-            let σ = client_unblind(&c, &α, &R, &R_prime, &X, &serialized_s);
+            let (privkey, pubkey) = keygen(&mut csprng);
+            let (server_state, server_resp1) = server1(&mut csprng);
+            let (client_state, client_resp) = client1(&mut csprng, &pubkey, m, &server_resp1);
+            let server_resp2 = server2(&privkey, &server_state, &client_resp);
+            client2(&pubkey, &client_state, &server_resp2).unwrap()
         })
     });
 }
+*/
 
-criterion_group!(benches, blind_schnorr_steps, blind_schnorr_full);
+pub fn abe_steps(bencher: &mut Criterion) {
+    use std::sync::{Arc, Barrier};
+
+    use blind_sig_bench::abe::{client1, client2, keygen, server1, server2, verify};
+    use threadpool::ThreadPool;
+
+    let mut group = bencher.benchmark_group("Parallel Abe");
+
+    let mut csprng = StdRng::from_entropy();
+    let m = b"Hello world";
+
+    group.bench_function("keygen", |b| b.iter(|| keygen(&mut csprng)));
+    let (privkey, pubkey) = keygen(&mut csprng);
+
+    for &num_sessions in SESSION_SIZES {
+        let pool = ThreadPool::new(num_sessions);
+        // A barrier that can wait for all sessions, plus the main thread
+        let barrier = Arc::new(Barrier::new(num_sessions + 1));
+
+        //
+        // Bench server1
+        //
+
+        let inputs_to_server1 = vec![(StdRng::from_entropy(), pubkey.clone(),); num_sessions];
+        let bench_name = format!("step 1[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for (mut csprng, pubkey) in inputs_to_server1.clone().into_iter() {
+                    let barrier_copy = barrier.clone();
+
+                    pool.execute(move || {
+                        server1(&mut csprng, &pubkey);
+                        barrier_copy.wait();
+                    });
+                }
+                barrier.wait()
+            })
+        });
+        let (server_state, server_resp1) = server1(&mut csprng, &pubkey);
+
+        //
+        // Bench client1
+        //
+
+        let inputs_to_client1 = vec![
+            (
+                StdRng::from_entropy(),
+                pubkey.clone(),
+                m.to_vec(),
+                server_resp1
+            );
+            num_sessions
+        ];
+        let bench_name = format!("step 2[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for (mut csprng, pubkey, m, server_resp1) in inputs_to_client1.clone().into_iter() {
+                    let barrier_copy = barrier.clone();
+
+                    pool.execute(move || {
+                        client1(&mut csprng, &pubkey, &m, &server_resp1);
+                        barrier_copy.wait();
+                    });
+                }
+                barrier.wait()
+            })
+        });
+        let (client_state, client_resp) = client1(&mut csprng, &pubkey, m, &server_resp1);
+
+        //
+        // Bench server2
+        //
+
+        let inputs_to_server2 =
+            vec![(privkey.clone(), server_state.clone(), client_resp.clone(),); num_sessions];
+        let bench_name = format!("step 3[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for (privkey, server_state, client_resp) in inputs_to_server2.clone().into_iter() {
+                    let barrier_copy = barrier.clone();
+
+                    pool.execute(move || {
+                        server2(&privkey, &server_state, &client_resp);
+                        barrier_copy.wait();
+                    });
+                }
+                barrier.wait()
+            })
+        });
+        let server_resp2 = server2(&privkey, &server_state, &client_resp);
+
+        //
+        // Bench client2
+        //
+
+        let inputs_to_client2 = vec![
+            (
+                pubkey.clone(),
+                client_state.clone(),
+                m.clone(),
+                server_resp2.clone()
+            );
+            num_sessions
+        ];
+        let bench_name = format!("step 4[s = {}]", num_sessions);
+        group.bench_function(bench_name, |b| {
+            b.iter(|| {
+                for (pubkey, client_state, m, server_resp2) in inputs_to_client2.clone().into_iter()
+                {
+                    let barrier_copy = barrier.clone();
+
+                    pool.execute(move || {
+                        client2(&pubkey, &client_state, &m, &server_resp2);
+                        barrier_copy.wait();
+                    });
+                }
+                barrier.wait()
+            })
+        });
+        let sig = client2(&pubkey, &client_state, m, &server_resp2).unwrap();
+
+        assert!(verify(&pubkey, m, &sig));
+    }
+}
+
+criterion_group!(benches, abe_steps, blind_schnorr_steps,);
 criterion_main!(benches);

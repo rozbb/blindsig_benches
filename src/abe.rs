@@ -103,14 +103,66 @@ lazy_static! {
     static ref H3: Blake2b = Blake2b::new_varkey(b"Abe Blind Sig Oracle 3").unwrap();
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct Pubkey {
     y: GroupElem,
     z: GroupElem,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct Privkey(Scalar);
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+pub struct ServerState {
+    u: Scalar,
+    s1: Scalar,
+    s2: Scalar,
+    d: Scalar,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+pub struct ServerResp1 {
+    rnd: [u8; 32],
+    a: GroupElem,
+    b1: GroupElem,
+    b2: GroupElem,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+pub struct ClientState {
+    ζ: GroupElem,
+    ζ1: GroupElem,
+    γ: Scalar,
+    τ: Scalar,
+    t1: Scalar,
+    t2: Scalar,
+    t3: Scalar,
+    t4: Scalar,
+    t5: Scalar,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+pub struct ClientResp(Scalar);
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+pub struct ServerResp2 {
+    r: Scalar,
+    c: Scalar,
+    s1: Scalar,
+    s2: Scalar,
+    d: Scalar,
+}
+
+pub struct Signature {
+    ζ: GroupElem,
+    ζ1: GroupElem,
+    ρ: Scalar,
+    ω: Scalar,
+    σ1: Scalar,
+    σ2: Scalar,
+    δ: Scalar,
+    μ: Scalar,
+}
 
 pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Privkey, Pubkey) {
     // x ← S
@@ -173,22 +225,6 @@ pub fn verify(pubkey: &Pubkey, m: &[u8], sig: &Signature) -> bool {
     h == ω.0 + δ.0
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ServerState {
-    u: Scalar,
-    s1: Scalar,
-    s2: Scalar,
-    d: Scalar,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ServerResp1 {
-    rnd: [u8; 32],
-    a: GroupElem,
-    b1: GroupElem,
-    b2: GroupElem,
-}
-
 pub fn server1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerState, ServerResp1) {
     let Pubkey { z, .. } = pubkey;
 
@@ -220,22 +256,6 @@ pub fn server1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerS
 
     (state, resp)
 }
-
-#[derive(Serialize, Deserialize)]
-pub struct ClientState {
-    ζ: GroupElem,
-    ζ1: GroupElem,
-    γ: Scalar,
-    τ: Scalar,
-    t1: Scalar,
-    t2: Scalar,
-    t3: Scalar,
-    t4: Scalar,
-    t5: Scalar,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ClientResp(Scalar);
 
 pub fn client1<R: RngCore + CryptoRng>(
     rng: &mut R,
@@ -312,15 +332,6 @@ pub fn client1<R: RngCore + CryptoRng>(
     (state, resp)
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ServerResp2 {
-    r: Scalar,
-    c: Scalar,
-    s1: Scalar,
-    s2: Scalar,
-    d: Scalar,
-}
-
 pub fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
     let Privkey(x) = privkey;
     let ServerState { u, s1, s2, d } = state;
@@ -338,17 +349,6 @@ pub fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp)
         s2: *s2,
         d: *d,
     }
-}
-
-pub struct Signature {
-    ζ: GroupElem,
-    ζ1: GroupElem,
-    ρ: Scalar,
-    ω: Scalar,
-    σ1: Scalar,
-    σ2: Scalar,
-    δ: Scalar,
-    μ: Scalar,
 }
 
 pub fn client2(

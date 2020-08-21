@@ -5,19 +5,12 @@ use std::{error::Error, fs::File, io::BufReader};
 use gnuplot::{
     AutoOption::{Auto, Fix},
     AxesCommon, DashType, Figure, Font, LabelOption,
-    PlotOption::{self, Caption, Color, LineStyle, PointSymbol},
+    PlotOption::{Caption, Color, LineStyle, PointSymbol},
     Tick,
 };
 use serde::{Deserialize, Serialize};
 
 static SESSION_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64];
-static NETWORK_SPEEDS: &[usize] = &[1, 10, 100];
-static LINE_STYLES: &[PlotOption<&str>] = &[
-    LineStyle(DashType::Solid),
-    LineStyle(DashType::Dash),
-    LineStyle(DashType::Dot),
-];
-
 static SCHNORR_STR: &str = "Sequential Blind Schnorr";
 static ABE_STR: &str = "Parallel Abe";
 static FONT: LabelOption<&str> = Font("Fira Sans", 10f64);
@@ -96,40 +89,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_x_range(Fix(0.7f64), Fix(80f64))
         .set_y_range(Fix(0f64), Fix(5200f64));
 
-    for (&bandwidth, &line_style) in NETWORK_SPEEDS.iter().zip(LINE_STYLES) {
-        // Collect (num_sessions, runtime of Abe with num_sessions in ms)
-        let abe_runtimes = SESSION_SIZES.iter().map(|num_sessions| {
-            get_mean_server_runtime(ABE_STR, *num_sessions, bandwidth).unwrap() / 1000f64
-        });
-        // Collect (num_sessions, runtime of Abe with num_sessions in ms)
-        let schnorr_runtimes = SESSION_SIZES.iter().map(|num_sessions| {
-            get_mean_server_runtime(SCHNORR_STR, *num_sessions, bandwidth).unwrap() / 1000f64
-        });
+    // 10Mbps. Changing this really doesn't affect benchmarks
+    let bandwidth = 10;
 
-        let abe_caption = format!("{ABE_STR} {bandwidth}Mbps");
-        let schnorr_caption = format!("{SCHNORR_STR} {bandwidth}Mbps");
+    // Collect (num_sessions, runtime of Abe with num_sessions in ms)
+    let abe_runtimes = SESSION_SIZES.iter().map(|num_sessions| {
+        get_mean_server_runtime(ABE_STR, *num_sessions, bandwidth).unwrap() / 1000f64
+    });
+    // Collect (num_sessions, runtime of Abe with num_sessions in ms)
+    let schnorr_runtimes = SESSION_SIZES.iter().map(|num_sessions| {
+        get_mean_server_runtime(SCHNORR_STR, *num_sessions, bandwidth).unwrap() / 1000f64
+    });
 
-        plot.lines_points(
-            SESSION_SIZES,
-            abe_runtimes,
-            &[
-                Caption(&abe_caption),
-                Color("red"),
-                PointSymbol('O'),
-                line_style,
-            ],
-        )
-        .lines_points(
-            SESSION_SIZES,
-            schnorr_runtimes,
-            &[
-                Caption(&schnorr_caption),
-                Color("blue"),
-                PointSymbol('S'),
-                line_style,
-            ],
-        );
-    }
+    let abe_caption = format!("{ABE_STR}");
+    let schnorr_caption = format!("{SCHNORR_STR}");
+
+    plot.lines_points(
+        SESSION_SIZES,
+        abe_runtimes,
+        &[
+            Caption(&abe_caption),
+            Color("red"),
+            PointSymbol('O'),
+            LineStyle(DashType::Solid),
+        ],
+    )
+    .lines_points(
+        SESSION_SIZES,
+        schnorr_runtimes,
+        &[
+            Caption(&schnorr_caption),
+            Color("blue"),
+            PointSymbol('S'),
+            LineStyle(DashType::Solid),
+        ],
+    );
 
     fg.show().unwrap();
     //fg.save_to_svg("plots/server_runtime.svg", 1080, 720)

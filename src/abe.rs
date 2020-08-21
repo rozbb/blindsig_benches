@@ -112,7 +112,7 @@ pub struct Pubkey {
 #[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct Privkey(Scalar);
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
 pub struct ServerState {
     u: Scalar,
     s1: Scalar,

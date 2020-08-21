@@ -3,7 +3,10 @@ use curve25519_dalek::{
     scalar::Scalar as ScalarRepr,
 };
 use rand::{CryptoRng, RngCore};
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    de::{SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 
 struct ThirtyTwoBytesVisitor;
 
@@ -25,6 +28,20 @@ impl<'de> Visitor<'de> for ThirtyTwoBytesVisitor {
         } else {
             Err(serde::de::Error::invalid_length(b.len(), &"32 bytes"))
         }
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut buf = [0u8; 32];
+        for i in 0..32 {
+            buf[i] = seq
+                .next_element()
+                .expect("error getting next element in sequence")
+                .expect("expected another element in seq");
+        }
+        Ok(buf)
     }
 }
 
@@ -79,7 +96,7 @@ fn deserialize_scalar<'de, D: Deserializer<'de>>(de: D) -> Result<ScalarRepr, D:
     Ok(scalar)
 }
 
-#[derive(Copy, Clone, Deserialize, Serialize)]
+#[derive(Copy, Clone, Default, Deserialize, Serialize)]
 pub struct Scalar(
     #[serde(
         serialize_with = "serialize_scalar",

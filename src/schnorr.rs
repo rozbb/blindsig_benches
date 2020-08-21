@@ -53,14 +53,19 @@ use crate::common::{GroupElem, Scalar};
 use blake2::{digest::Digest, Blake2b};
 use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, scalar::Scalar as ScalarRepr};
 use rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone)]
 pub struct Privkey(Scalar);
+#[derive(Clone)]
 pub struct Pubkey(GroupElem);
 
+#[derive(Clone, Copy, Default)]
 pub struct ServerState {
     r: Scalar,
 }
 
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct ServerResp1 {
     R: GroupElem,
 }
@@ -72,15 +77,18 @@ pub struct ClientState {
     R_prime: GroupElem,
 }
 
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct ClientResp {
     c: Scalar,
 }
 
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct ServerResp2 {
     s: Scalar,
 }
 
 // Used in protocol step 4
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct Signature {
     R_prime: GroupElem,
     s_prime: Scalar,

@@ -80,7 +80,7 @@
 *   return ω + δ == H₃(ζ, ζ₁, g^ρ y^ω, g^σ₁ ζ₁^δ, h^σ₂ (ζ/ζ₁)^δ, z^μ ζ^δ, m):
 */
 
-use crate::common::{GroupElem, Scalar};
+use crate::common::{FourMoveBlindSig, GroupElem, Scalar};
 
 use blake2::{crypto_mac::Mac, digest::Digest, Blake2b};
 use curve25519_dalek::{
@@ -153,6 +153,7 @@ pub struct ServerResp2 {
     d: Scalar,
 }
 
+#[derive(Clone)]
 pub struct Signature {
     ζ: GroupElem,
     ζ1: GroupElem,
@@ -164,242 +165,257 @@ pub struct Signature {
     μ: Scalar,
 }
 
-pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Privkey, Pubkey) {
-    // x ← S
-    // y := g^x
-    // z := H₁(h, y)
-    // if z == 1: retry
-    let x = Scalar::random(rng);
-    let y = GroupElem(&x.0 * &RISTRETTO_BASEPOINT_TABLE);
-    let z = GroupElem(RistrettoPoint::from_hash(
-        H1.clone()
-            .chain(&RISTRETTO_ALT_GENERATOR.basepoint().compress().to_bytes())
-            .chain(y.0.compress().to_bytes()),
-    ));
+/// The impl of the Abe blind signature scheme
+pub struct Abe;
 
-    // sk = x
-    let privkey = Privkey(x);
-    // pk = (y, z)
-    let pubkey = Pubkey { y, z };
+impl FourMoveBlindSig for Abe {
+    type Privkey = Privkey;
+    type Pubkey = Pubkey;
 
-    (privkey, pubkey)
-}
+    type ServerState = ServerState;
+    type ClientState = ClientState;
+    type ClientResp = ClientResp;
+    type ServerResp1 = ServerResp1;
+    type ServerResp2 = ServerResp2;
+    type Signature = Signature;
 
-pub fn verify(pubkey: &Pubkey, m: &[u8], sig: &Signature) -> bool {
-    let Pubkey { y, z } = pubkey;
-    let Signature {
-        ζ,
-        ζ1,
-        ρ,
-        ω,
-        σ1,
-        σ2,
-        δ,
-        μ,
-    } = sig;
+    fn keygen<R: CryptoRng + RngCore>(rng: &mut R) -> (Privkey, Pubkey) {
+        // x ← S
+        // y := g^x
+        // z := H₁(h, y)
+        // if z == 1: retry
+        let x = Scalar::random(rng);
+        let y = GroupElem(&x.0 * &RISTRETTO_BASEPOINT_TABLE);
+        let z = GroupElem(RistrettoPoint::from_hash(
+            H1.clone()
+                .chain(&RISTRETTO_ALT_GENERATOR.basepoint().compress().to_bytes())
+                .chain(y.0.compress().to_bytes()),
+        ));
 
-    // Intermediate calculations
-    let ζ2 = GroupElem(ζ.0 - ζ1.0);
-    let α = (&ρ.0 * &RISTRETTO_BASEPOINT_TABLE) + ω.0 * y.0;
-    let β1 = &σ1.0 * &RISTRETTO_BASEPOINT_TABLE + δ.0 * ζ1.0;
-    let β2 = &σ2.0 * &*RISTRETTO_ALT_GENERATOR + δ.0 * ζ2.0;
-    let η = μ.0 * z.0 + δ.0 * ζ.0;
+        // sk = x
+        let privkey = Privkey(x);
+        // pk = (y, z)
+        let pubkey = Pubkey { y, z };
 
-    // if ω + δ ≠ H₃(
-    //    ζ, ζ₁, g^ρ y^ω, g^σ₁ ζ₁^δ,
-    //    h^σ₂ ζ₂^δ, z^μ ζ^δ, m,
-    // ):
-    //     abort
-    // return (ζ, ζ₁, ρ, ω, σ₁, σ₂, δ, μ)
-    let h = ScalarRepr::from_hash(
-        H3.clone()
-            .chain(ζ.to_bytes())
-            .chain(ζ1.to_bytes())
-            .chain(α.compress().to_bytes())
-            .chain(β1.compress().to_bytes())
-            .chain(β2.compress().to_bytes())
-            .chain(η.compress().to_bytes())
-            .chain(m),
-    );
-
-    h == ω.0 + δ.0
-}
-
-pub fn server1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerState, ServerResp1) {
-    let Pubkey { z, .. } = pubkey;
-
-    // rnd ← {0,1}*
-    // z₁ := H₂(rnd)
-    // z₂ := z/z₁
-    let mut rnd = [0u8; 32];
-    rng.fill_bytes(&mut rnd);
-    let z1 = RistrettoPoint::from_hash(H1.clone().chain(&rnd));
-    let z2 = z.0 - z1;
-
-    // u, s₁, s₂, d ← S
-    let (u, s1, s2, d) = (
-        Scalar::random(rng),
-        Scalar::random(rng),
-        Scalar::random(rng),
-        Scalar::random(rng),
-    );
-
-    // a := gᵘ
-    // b₁ := gˢ¹ z₁ᵈ
-    // b₂ := hˢ²z₂ᵈ
-    let a = GroupElem(&u.0 * &RISTRETTO_BASEPOINT_TABLE);
-    let b1 = GroupElem(&s1.0 * &RISTRETTO_BASEPOINT_TABLE + d.0 * z1);
-    let b2 = GroupElem(&s2.0 * &*RISTRETTO_ALT_GENERATOR + d.0 * z2);
-
-    let state = ServerState { u, s1, s2, d };
-    let resp = ServerResp1 { rnd, a, b1, b2 };
-
-    (state, resp)
-}
-
-pub fn client1<R: RngCore + CryptoRng>(
-    rng: &mut R,
-    pubkey: &Pubkey,
-    m: &[u8],
-    server_resp1: &ServerResp1,
-) -> (ClientState, ClientResp) {
-    let Pubkey { y, z } = pubkey;
-    let ServerResp1 { rnd, a, b1, b2 } = server_resp1;
-
-    // z₁ := H₂(rnd)
-    // γ ← S*
-    let z1 = RistrettoPoint::from_hash(H1.clone().chain(&rnd));
-    let mut γ = Scalar(ScalarRepr::zero());
-    while γ.0 == ScalarRepr::zero() {
-        γ = Scalar::random(rng);
+        (privkey, pubkey)
     }
 
-    // ζ := z^γ
-    // ζ₁ := z₁^γ
-    // ζ₂ := ζ/ζ
-    let ζ = GroupElem(γ.0 * z.0);
-    let ζ1 = GroupElem(γ.0 * z1);
-    let ζ2 = GroupElem(ζ.0 - ζ1.0);
+    fn verify(pubkey: &Pubkey, m: &[u8], sig: &Signature) -> bool {
+        let Pubkey { y, z } = pubkey;
+        let Signature {
+            ζ,
+            ζ1,
+            ρ,
+            ω,
+            σ1,
+            σ2,
+            δ,
+            μ,
+        } = sig;
 
-    // t₁, t₂, t₃, t₄, t₅ ← S
-    let (t1, t2, t3, t4, t5) = (
-        Scalar::random(rng),
-        Scalar::random(rng),
-        Scalar::random(rng),
-        Scalar::random(rng),
-        Scalar::random(rng),
-    );
+        // Intermediate calculations
+        let ζ2 = GroupElem(ζ.0 - ζ1.0);
+        let α = (&ρ.0 * &RISTRETTO_BASEPOINT_TABLE) + ω.0 * y.0;
+        let β1 = &σ1.0 * &RISTRETTO_BASEPOINT_TABLE + δ.0 * ζ1.0;
+        let β2 = &σ2.0 * &*RISTRETTO_ALT_GENERATOR + δ.0 * ζ2.0;
+        let η = μ.0 * z.0 + δ.0 * ζ.0;
 
-    // α := agᵗ¹yᵗ²
-    // β₁ := b₁^γ gᵗ³ ζ₁ᵗ⁴
-    // β₂ := b₂^γ hᵗ⁵ ζ₂ᵗ⁴
-    let α = a.0 + &t1.0 * &RISTRETTO_BASEPOINT_TABLE + t2.0 * y.0;
-    let β1 = γ.0 * b1.0 + &t3.0 * &RISTRETTO_BASEPOINT_TABLE + t4.0 * ζ1.0;
-    let β2 = γ.0 * b2.0 + &t5.0 * &*RISTRETTO_ALT_GENERATOR + t4.0 * ζ2.0;
+        // if ω + δ ≠ H₃(
+        //    ζ, ζ₁, g^ρ y^ω, g^σ₁ ζ₁^δ,
+        //    h^σ₂ ζ₂^δ, z^μ ζ^δ, m,
+        // ):
+        //     abort
+        // return (ζ, ζ₁, ρ, ω, σ₁, σ₂, δ, μ)
+        let h = ScalarRepr::from_hash(
+            H3.clone()
+                .chain(ζ.to_bytes())
+                .chain(ζ1.to_bytes())
+                .chain(α.compress().to_bytes())
+                .chain(β1.compress().to_bytes())
+                .chain(β2.compress().to_bytes())
+                .chain(η.compress().to_bytes())
+                .chain(m),
+        );
 
-    // τ ← S
-    // η := z^τ
-    // ε := H₃(ζ, ζ₁, α, β₁ β₂, η, m)
-    let τ = Scalar::random(rng);
-    let η = τ.0 * z.0;
-    let ε = ScalarRepr::from_hash(
-        H3.clone()
-            .chain(ζ.to_bytes())
-            .chain(ζ1.to_bytes())
-            .chain(α.compress().to_bytes())
-            .chain(β1.compress().to_bytes())
-            .chain(β2.compress().to_bytes())
-            .chain(η.compress().to_bytes())
-            .chain(m),
-    );
-
-    // e := ε - t₂ - t₄
-    let e = Scalar(ε - t2.0 - t4.0);
-
-    let state = ClientState {
-        ζ,
-        ζ1,
-        γ,
-        τ,
-        t1,
-        t2,
-        t3,
-        t4,
-        t5,
-    };
-    let resp = ClientResp(e);
-
-    (state, resp)
-}
-
-pub fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
-    let Privkey(x) = privkey;
-    let ServerState { u, s1, s2, d } = state;
-    let ClientResp(e) = client_resp;
-
-    // c := e - d
-    // r := u - cx
-    let c = Scalar(e.0 - d.0);
-    let r = Scalar(u.0 - c.0 * x.0);
-
-    ServerResp2 {
-        r,
-        c,
-        s1: *s1,
-        s2: *s2,
-        d: *d,
+        h == ω.0 + δ.0
     }
-}
 
-pub fn client2(
-    pubkey: &Pubkey,
-    state: &ClientState,
-    m: &[u8],
-    server_resp2: &ServerResp2,
-) -> Option<Signature> {
-    let ClientState {
-        ζ,
-        ζ1,
-        γ,
-        τ,
-        t1,
-        t2,
-        t3,
-        t4,
-        t5,
-    } = state;
-    let ServerResp2 { r, c, s1, s2, d } = server_resp2;
+    fn server1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerState, ServerResp1) {
+        let Pubkey { z, .. } = pubkey;
 
-    // ρ := r + t₁
-    // ω := c + t₂
-    let ρ = Scalar(r.0 + t1.0);
-    let ω = Scalar(c.0 + t2.0);
+        // rnd ← {0,1}*
+        // z₁ := H₂(rnd)
+        // z₂ := z/z₁
+        let mut rnd = [0u8; 32];
+        rng.fill_bytes(&mut rnd);
+        let z1 = RistrettoPoint::from_hash(H1.clone().chain(&rnd));
+        let z2 = z.0 - z1;
 
-    // σ₁ := γs₁ + t₃
-    // σ₂ := γs₂ + t₅
-    let σ1 = Scalar(γ.0 * s1.0 + t3.0);
-    let σ2 = Scalar(γ.0 * s2.0 + t5.0);
+        // u, s₁, s₂, d ← S
+        let (u, s1, s2, d) = (
+            Scalar::random(rng),
+            Scalar::random(rng),
+            Scalar::random(rng),
+            Scalar::random(rng),
+        );
 
-    // δ := d + t₄
-    // μ := τ - δγ
-    let δ = Scalar(d.0 + t4.0);
-    let μ = Scalar(τ.0 - δ.0 * γ.0);
+        // a := gᵘ
+        // b₁ := gˢ¹ z₁ᵈ
+        // b₂ := hˢ²z₂ᵈ
+        let a = GroupElem(&u.0 * &RISTRETTO_BASEPOINT_TABLE);
+        let b1 = GroupElem(&s1.0 * &RISTRETTO_BASEPOINT_TABLE + d.0 * z1);
+        let b2 = GroupElem(&s2.0 * &*RISTRETTO_ALT_GENERATOR + d.0 * z2);
 
-    let tentative_sig = Signature {
-        ζ: *ζ,
-        ζ1: *ζ1,
-        ρ,
-        ω,
-        σ1,
-        σ2,
-        δ,
-        μ,
-    };
+        let state = ServerState { u, s1, s2, d };
+        let resp = ServerResp1 { rnd, a, b1, b2 };
 
-    if verify(pubkey, m, &tentative_sig) {
-        Some(tentative_sig)
-    } else {
-        None
+        (state, resp)
+    }
+
+    fn client1<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        pubkey: &Pubkey,
+        m: &[u8],
+        server_resp1: &ServerResp1,
+    ) -> (ClientState, ClientResp) {
+        let Pubkey { y, z } = pubkey;
+        let ServerResp1 { rnd, a, b1, b2 } = server_resp1;
+
+        // z₁ := H₂(rnd)
+        // γ ← S*
+        let z1 = RistrettoPoint::from_hash(H1.clone().chain(&rnd));
+        let mut γ = Scalar(ScalarRepr::zero());
+        while γ.0 == ScalarRepr::zero() {
+            γ = Scalar::random(rng);
+        }
+
+        // ζ := z^γ
+        // ζ₁ := z₁^γ
+        // ζ₂ := ζ/ζ
+        let ζ = GroupElem(γ.0 * z.0);
+        let ζ1 = GroupElem(γ.0 * z1);
+        let ζ2 = GroupElem(ζ.0 - ζ1.0);
+
+        // t₁, t₂, t₃, t₄, t₅ ← S
+        let (t1, t2, t3, t4, t5) = (
+            Scalar::random(rng),
+            Scalar::random(rng),
+            Scalar::random(rng),
+            Scalar::random(rng),
+            Scalar::random(rng),
+        );
+
+        // α := agᵗ¹yᵗ²
+        // β₁ := b₁^γ gᵗ³ ζ₁ᵗ⁴
+        // β₂ := b₂^γ hᵗ⁵ ζ₂ᵗ⁴
+        let α = a.0 + &t1.0 * &RISTRETTO_BASEPOINT_TABLE + t2.0 * y.0;
+        let β1 = γ.0 * b1.0 + &t3.0 * &RISTRETTO_BASEPOINT_TABLE + t4.0 * ζ1.0;
+        let β2 = γ.0 * b2.0 + &t5.0 * &*RISTRETTO_ALT_GENERATOR + t4.0 * ζ2.0;
+
+        // τ ← S
+        // η := z^τ
+        // ε := H₃(ζ, ζ₁, α, β₁ β₂, η, m)
+        let τ = Scalar::random(rng);
+        let η = τ.0 * z.0;
+        let ε = ScalarRepr::from_hash(
+            H3.clone()
+                .chain(ζ.to_bytes())
+                .chain(ζ1.to_bytes())
+                .chain(α.compress().to_bytes())
+                .chain(β1.compress().to_bytes())
+                .chain(β2.compress().to_bytes())
+                .chain(η.compress().to_bytes())
+                .chain(m),
+        );
+
+        // e := ε - t₂ - t₄
+        let e = Scalar(ε - t2.0 - t4.0);
+
+        let state = ClientState {
+            ζ,
+            ζ1,
+            γ,
+            τ,
+            t1,
+            t2,
+            t3,
+            t4,
+            t5,
+        };
+        let resp = ClientResp(e);
+
+        (state, resp)
+    }
+
+    fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
+        let Privkey(x) = privkey;
+        let ServerState { u, s1, s2, d } = state;
+        let ClientResp(e) = client_resp;
+
+        // c := e - d
+        // r := u - cx
+        let c = Scalar(e.0 - d.0);
+        let r = Scalar(u.0 - c.0 * x.0);
+
+        ServerResp2 {
+            r,
+            c,
+            s1: *s1,
+            s2: *s2,
+            d: *d,
+        }
+    }
+
+    fn client2(
+        pubkey: &Pubkey,
+        state: &ClientState,
+        m: &[u8],
+        server_resp2: &ServerResp2,
+    ) -> Option<Signature> {
+        let ClientState {
+            ζ,
+            ζ1,
+            γ,
+            τ,
+            t1,
+            t2,
+            t3,
+            t4,
+            t5,
+        } = state;
+        let ServerResp2 { r, c, s1, s2, d } = server_resp2;
+
+        // ρ := r + t₁
+        // ω := c + t₂
+        let ρ = Scalar(r.0 + t1.0);
+        let ω = Scalar(c.0 + t2.0);
+
+        // σ₁ := γs₁ + t₃
+        // σ₂ := γs₂ + t₅
+        let σ1 = Scalar(γ.0 * s1.0 + t3.0);
+        let σ2 = Scalar(γ.0 * s2.0 + t5.0);
+
+        // δ := d + t₄
+        // μ := τ - δγ
+        let δ = Scalar(d.0 + t4.0);
+        let μ = Scalar(τ.0 - δ.0 * γ.0);
+
+        let tentative_sig = Signature {
+            ζ: *ζ,
+            ζ1: *ζ1,
+            ρ,
+            ω,
+            σ1,
+            σ2,
+            δ,
+            μ,
+        };
+
+        if Self::verify(pubkey, m, &tentative_sig) {
+            Some(tentative_sig)
+        } else {
+            None
+        }
     }
 }
 
@@ -407,12 +423,13 @@ pub fn client2(
 fn test_correctness() {
     let mut csprng = rand::thread_rng();
     let m = b"Hello world";
+    type Alg = Abe;
 
-    let (privkey, pubkey) = keygen(&mut csprng);
-    let (server_state, server_resp1) = server1(&mut csprng, &pubkey);
-    let (client_state, client_resp) = client1(&mut csprng, &pubkey, m, &server_resp1);
-    let server_resp2 = server2(&privkey, &server_state, &client_resp);
-    let sig = client2(&pubkey, &client_state, m, &server_resp2).unwrap();
+    let (privkey, pubkey) = Alg::keygen(&mut csprng);
+    let (server_state, server_resp1) = Alg::server1(&mut csprng, &pubkey);
+    let (client_state, client_resp) = Alg::client1(&mut csprng, &pubkey, m, &server_resp1);
+    let server_resp2 = Alg::server2(&privkey, &server_state, &client_resp);
+    let sig = Alg::client2(&pubkey, &client_state, m, &server_resp2).unwrap();
 
-    assert!(verify(&pubkey, m, &sig));
+    assert!(Alg::verify(&pubkey, m, &sig));
 }

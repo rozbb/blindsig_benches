@@ -5,12 +5,24 @@ use rand::{rngs::StdRng, SeedableRng};
 
 static SESSION_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32, 64];
 
+// 30ms mean latency between server and client. Let's say this is normally distributed with
+// standard deviation of 5ms so that 95% of connections have latency between 20ms and 40ms.
+static LATENCY_MEAN: f64 = 30;
+static LATENCY_STD: f64 = 5;
+
+// 100ms average time between clients connecting. This is modeled as a Poisson point process, and
+// so the time between arrivals is an exponential distribution with λ = 1 / mean_interarrival_time.
+static MEAN_INTERARRIVAL_TIME: f64 = 300;
+
 pub fn blind_schnorr_steps(bencher: &mut Criterion) {
     use blind_sig_bench::schnorr::{client1, client2, keygen, server1, server2, verify};
 
     let mut group = bencher.benchmark_group("Sequential Blind Schnorr");
     let mut csprng = rand::thread_rng();
     let m = b"Hello world";
+
+    let latency_distr = rand_distr::Normal::new(LATENCY_MEAN, LATENCY_STD);
+    let client_arrival_distr = rand_distr::Exp::new(1 / MEAN_INTERARRIVAL_TIME);
 
     group.bench_function("keygen", |b| b.iter(|| keygen(&mut csprng)));
     let (privkey, pubkey) = keygen(&mut csprng);

@@ -3,47 +3,7 @@ use curve25519_dalek::{
     scalar::Scalar as ScalarRepr,
 };
 use rand::{CryptoRng, RngCore};
-use serde::{
-    de::{SeqAccess, Visitor},
-    Deserialize, Deserializer, Serialize, Serializer,
-};
-
-struct ThirtyTwoBytesVisitor;
-
-impl<'de> Visitor<'de> for ThirtyTwoBytesVisitor {
-    type Value = [u8; 32];
-
-    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-        write!(formatter, "a bytestring of length 32")
-    }
-
-    fn visit_bytes<E>(self, b: &[u8]) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        if b.len() == 32 {
-            let mut buf = [0u8; 32];
-            buf.copy_from_slice(b);
-            Ok(buf)
-        } else {
-            Err(serde::de::Error::invalid_length(b.len(), &"32 bytes"))
-        }
-    }
-
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        let mut buf = [0u8; 32];
-        for i in 0..32 {
-            buf[i] = seq
-                .next_element()
-                .expect("error getting next element in sequence")
-                .expect("expected another element in seq");
-        }
-        Ok(buf)
-    }
-}
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 fn serialize_ristretto_point<S: Serializer>(
     point: &RistrettoPoint,
@@ -56,7 +16,7 @@ fn serialize_ristretto_point<S: Serializer>(
 fn deserialize_ristretto_point<'de, D: Deserializer<'de>>(
     de: D,
 ) -> Result<RistrettoPoint, D::Error> {
-    let bytes = de.deserialize_bytes(ThirtyTwoBytesVisitor)?;
+    let bytes = <[u8; 32]>::deserialize(de)?;
     let compressed = CompressedRistretto::from_slice(&bytes);
 
     let point = compressed
@@ -91,7 +51,7 @@ fn serialize_scalar<S: Serializer>(scalar: &ScalarRepr, ser: S) -> Result<S::Ok,
 }
 
 fn deserialize_scalar<'de, D: Deserializer<'de>>(de: D) -> Result<ScalarRepr, D::Error> {
-    let bytes = de.deserialize_bytes(ThirtyTwoBytesVisitor)?;
+    let bytes = <[u8; 32]>::deserialize(de)?;
     let scalar = ScalarRepr::from_canonical_bytes(bytes).expect("encountered an invalid scalar");
     Ok(scalar)
 }
@@ -115,4 +75,41 @@ impl Scalar {
     pub fn random<R: CryptoRng + RngCore>(rng: &mut R) -> Scalar {
         Scalar(ScalarRepr::random(rng))
     }
+}
+
+pub trait FourMoveBlindSig {
+    type Privkey: Clone + Copy + Send + Sync + 'static;
+    type Pubkey: Clone + Copy + Send + Sync + 'static;
+
+    type ServerState: Clone + Send + Sync + 'static;
+    type ClientState: Clone;
+    type ClientResp: Clone + for<'de> Deserialize<'de> + Serialize;
+    type ServerResp1: Clone + for<'de> Deserialize<'de> + Serialize;
+    type ServerResp2: Clone + for<'de> Deserialize<'de> + Serialize;
+    type Signature: Clone;
+
+    fn keygen<R: RngCore + CryptoRng>(rng: &mut R) -> (Self::Privkey, Self::Pubkey);
+    fn verify(pubkey: &Self::Pubkey, m: &[u8], sig: &Self::Signature) -> bool;
+
+    fn server1<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        pubkey: &Self::Pubkey,
+    ) -> (Self::ServerState, Self::ServerResp1);
+    fn client1<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        pubkey: &Self::Pubkey,
+        m: &[u8],
+        server_resp1: &Self::ServerResp1,
+    ) -> (Self::ClientState, Self::ClientResp);
+    fn server2(
+        privkey: &Self::Privkey,
+        state: &Self::ServerState,
+        client_resp: &Self::ClientResp,
+    ) -> Self::ServerResp2;
+    fn client2(
+        pubkey: &Self::Pubkey,
+        state: &Self::ClientState,
+        m: &[u8],
+        server_resp2: &Self::ServerResp2,
+    ) -> Option<Self::Signature>;
 }

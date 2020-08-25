@@ -1,20 +1,29 @@
-use crate::{abe::Abe, common::FourMoveBlindSig, schnorr::BlindSchnorr};
-use std::sync::{
-    atomic::{AtomicBool, Ordering::SeqCst},
-    Arc,
+use crate::common::FourMoveBlindSig;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
+    thread::sleep,
+    time::Duration,
 };
 
 use dashmap::DashMap;
-use rand::Rng;
+use rand::{distributions::Distribution, Rng};
 
 const SERVER_ADDR: &str = "localhost:23489";
 
 type ServerFunc = Box<dyn Fn(&rouille::Request) -> rouille::Response + Send + Sync + 'static>;
 type ClientFunc = Box<dyn Fn() + Send>;
 
-fn make_server_func<S: FourMoveBlindSig>(
+fn make_server_func<S, D>(
     global_state: Arc<DashMap<String, S::ServerState>>,
-) -> (S::Privkey, S::Pubkey, ServerFunc) {
+    latency_distr: D,
+) -> (S::Privkey, S::Pubkey, ServerFunc)
+where
+    S: FourMoveBlindSig,
+    D: Distribution<f64> + Send + Sync + 'static,
+{
     use rouille::{input::json_input, try_or_400, Request, Response};
 
     let mut csprng = rand::thread_rng();
@@ -29,15 +38,20 @@ fn make_server_func<S: FourMoveBlindSig>(
             .expect("no client_id provided")
             .to_string();
 
-        // I can only do 1 session at a time. If the global session is empty or the given client ID
-        // matches, we can continue. Otherwise 400.
+        // Only do as many parallels sessions as is permitted. If the global session is empty or
+        // the given client ID matches, we can continue. Otherwise 400.
         // I know this is actually a race condition, and you might get more parallelism than you
-        // intended, but this is unlikely to happen and this is just a benchmark so chill.
-        if !(global_state.len() < 1 || global_state.get(&client_id).is_some()) {
+        // intended, but:
+        // 1. this is unlikely to happen,
+        // 2. even if it does, it will not cascade into a big parallel mess, and
+        // 3. this is just a benchmark so chill.
+        if !(global_state.len() < S::MAX_PARALLEL_SESSIONS
+            || global_state.get(&client_id).is_some())
+        {
             return Response::text("").with_status_code(409);
         }
 
-        match req.url().as_ref() {
+        let res = match req.url().as_ref() {
             "/server1" => {
                 let (server_state, server_resp1) = S::server1(&mut csprng, &pubkey);
 
@@ -59,7 +73,13 @@ fn make_server_func<S: FourMoveBlindSig>(
                 Response::json(&server_resp2)
             }
             other => panic!("unexpected url {}", other),
-        }
+        };
+
+        // Simulate latency by sampling from the latency distribution and pausing for that time
+        let pause_time = std::cmp::max(0, latency_distr.sample(&mut csprng) as i64);
+        sleep(Duration::from_millis(pause_time as u64));
+
+        res
     };
 
     (privkey_copy, pubkey_copy, Box::new(handler))
@@ -115,12 +135,17 @@ fn make_client<S: FourMoveBlindSig>(privkey: S::Privkey, pubkey: S::Pubkey) -> C
     Box::new(client)
 }
 
-fn start_server<S: FourMoveBlindSig>(
+fn start_server<S, D>(
     addr: &'static str,
     pool_size: usize,
     global_state: Arc<DashMap<String, S::ServerState>>,
-) -> (S::Privkey, S::Pubkey, Arc<AtomicBool>) {
-    let (privkey, pubkey, server_func) = make_server_func::<S>(global_state);
+    latency_distr: D,
+) -> (S::Privkey, S::Pubkey, Arc<AtomicBool>)
+where
+    S: FourMoveBlindSig,
+    D: Distribution<f64> + Send + Sync + 'static,
+{
+    let (privkey, pubkey, server_func) = make_server_func::<S, _>(global_state, latency_distr);
 
     let stop_var = Arc::new(AtomicBool::new(false));
     let stop_var_copy = stop_var.clone();
@@ -128,13 +153,11 @@ fn start_server<S: FourMoveBlindSig>(
     std::thread::spawn(move || {
         let server = rouille::Server::new(addr, server_func)
             .expect("couldn't make server")
-            .pool_size(1);
+            .pool_size(pool_size);
 
         while !stop_var.load(SeqCst) {
             server.poll()
         }
-
-        println!("Server stopped");
     });
 
     (privkey, pubkey, stop_var_copy)
@@ -144,7 +167,9 @@ fn test_webserver<S: FourMoveBlindSig>() {
     let my_global_state: Arc<DashMap<String, <S as FourMoveBlindSig>::ServerState>> =
         Arc::new(DashMap::new());
 
-    let (privkey, pubkey, stop_var) = start_server::<S>(SERVER_ADDR, 1, my_global_state);
+    let latency_distr = rand_distr::Normal::new(50f64, 10f64).unwrap();
+    let (privkey, pubkey, stop_var) =
+        start_server::<S, _>(SERVER_ADDR, 1, my_global_state, latency_distr);
 
     let mut threads = Vec::new();
     for _ in 0..10 {
@@ -156,7 +181,7 @@ fn test_webserver<S: FourMoveBlindSig>() {
         thread.join();
     }
 
-    stop_var.store(false, SeqCst);
+    stop_var.store(true, SeqCst);
 }
 
 #[test]

@@ -78,6 +78,8 @@ impl Scalar {
 }
 
 pub trait FourMoveBlindSig {
+    const MAX_PARALLEL_SESSIONS: usize;
+
     type Privkey: Clone + Copy + Send + Sync + 'static;
     type Pubkey: Clone + Copy + Send + Sync + 'static;
 

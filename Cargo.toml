@@ -14,6 +14,7 @@ digest = { version = "0.8", default-features = false }
 gnuplot = "0.0.37"
 lazy_static = "1.4"
 rand = "0.7"
+rand_distr = "0.2"
 reqwest = { version = "0.10", features = ["blocking", "json"] }
 rouille = "3.0"
 serde = { version = "1.0", features = ["derive"] }

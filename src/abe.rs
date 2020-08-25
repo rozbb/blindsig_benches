@@ -169,6 +169,10 @@ pub struct Signature {
 pub struct Abe;
 
 impl FourMoveBlindSig for Abe {
+    // The Abe scheme can have polynomially many parallel sessions. We'll give it the maximum
+    // possible bound and see how it goes.
+    const MAX_PARALLEL_SESSIONS: usize = usize::MAX;
+
     type Privkey = Privkey;
     type Pubkey = Pubkey;
 

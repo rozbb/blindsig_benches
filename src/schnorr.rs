@@ -98,6 +98,9 @@ pub struct Signature {
 pub struct BlindSchnorr;
 
 impl FourMoveBlindSig for BlindSchnorr {
+    // The Blind Schnorr is necessarily sequential
+    const MAX_PARALLEL_SESSIONS: usize = 1;
+
     type Privkey = Privkey;
     type Pubkey = Pubkey;
 

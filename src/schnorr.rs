@@ -197,7 +197,7 @@ impl FourMoveBlindSig for BlindSchnorr {
     fn client2(
         pubkey: &Pubkey,
         state: &ClientState,
-        m: &[u8],
+        _m: &[u8],
         server_resp2: &ServerResp2,
     ) -> Option<Signature> {
         let Pubkey(X) = pubkey;

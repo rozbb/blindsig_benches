@@ -104,6 +104,8 @@ pub fn make_client<S: FourMoveBlindSig>(addr: &'static str, pubkey: S::Pubkey) -
                 .send()
                 .expect("didn't get server1 response");
             if res.status() == reqwest::StatusCode::from_u16(409).unwrap() {
+                // Server's busy. Back off for 100ms before trying again
+                sleep(Duration::from_millis(100));
                 continue;
             } else {
                 let resp = res.json().expect("invalid ServerResp1");

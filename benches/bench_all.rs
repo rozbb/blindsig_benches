@@ -63,6 +63,8 @@ fn bench_scheme<S: FourMoveBlindSig>(
     );
 
     for expected_iat in INTERARRIVAL_TIMES {
+        // Interarrival distribution of a Poisson point process with rate λ is the exponential
+        // distribution with parameter 1/λ
         let client_arrival_distr = rand_distr::Exp::new(1f64 / expected_iat).unwrap();
 
         let bench_name = format!(
@@ -70,7 +72,7 @@ fn bench_scheme<S: FourMoveBlindSig>(
             server_thread_pool_size, NUM_CLIENTS, expected_iat
         );
 
-        // Bench how long it takes to spawn num_clients many clients, waiting expected_iat
+        // Bench how long it takes to spawn NUM_CLIENTS many clients, waiting expected_iat
         // milliseconds between each other, connecting to a server which is running on
         // server_thread_pool_size many cores.
 
@@ -93,16 +95,21 @@ fn bench_scheme<S: FourMoveBlindSig>(
         });
     }
 
+    // Tell the server to stop
     stop_var.store(true, SeqCst);
+    // Wait a second for the server to get the message
+    sleep(Duration::from_secs(1));
 }
 
 fn bench_schnorr(bencher: &mut Criterion) {
+    // Schnorr is sequential so the threadpool size is always 1
     bench_scheme::<BlindSchnorr>(bencher, "Sequential Blind Schnorr", 1);
 }
 
 fn bench_abe(bencher: &mut Criterion) {
-    for thread_pool_size in THREADPOOL_SIZES {
-        bench_scheme::<Abe>(bencher, "Parallel Abe", *thread_pool_size);
+    // Abe is parallel so we benchmark it for various threadpool sizes
+    for &thread_pool_size in THREADPOOL_SIZES {
+        bench_scheme::<Abe>(bencher, "Parallel Abe", thread_pool_size);
     }
 }
 

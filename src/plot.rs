@@ -2,18 +2,17 @@ use std::{error::Error, fs::File, io::BufReader};
 
 use gnuplot::{
     AutoOption::{Auto, Fix},
-    AxesCommon, Coordinate, DashType, Figure, Font, LabelOption,
+    AxesCommon, Coordinate, DashType, Figure,
     PlotOption::{self, Caption, Color, LineStyle, PointSymbol},
     Tick, TickOption,
 };
 use serde::{Deserialize, Serialize};
 
-const INTERARRIVAL_TIMES: &[usize] = &[10, 50, 90, 130];
+const INTERARRIVAL_TIMES: &[usize] = &[1, 10, 50, 90, 130];
 const THREADPOOL_SIZES: &[usize] = &[1, 4, 16];
 
 static SCHNORR_STR: &str = "Sequential Blind Schnorr";
 static ABE_STR: &str = "Parallel Abe";
-static FONT: LabelOption<&str> = Font("Fira Sans", 12f64);
 
 // We do this weird structure bc that's how criterion formats its JSON outputs
 #[derive(Deserialize, Serialize)]
@@ -63,18 +62,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut plot = fg
         .axes2d()
-        .set_legend(
-            Coordinate::Axis(0.09f64),
-            Coordinate::Axis(14f64),
-            &[],
-            &[FONT],
-        )
+        .set_legend(Coordinate::Axis(0.90f64), Coordinate::Axis(14f64), &[], &[])
         .set_x_log(Some(2f64))
-        .set_x_label("Workload factor", &[FONT])
-        .set_y_label("Runtime (s)", &[FONT])
-        .set_y_ticks(Some((Auto, 0)), &[], &[FONT])
-        .set_x_ticks_custom::<_, &str, _, _>(&ticks, &[TickOption::Format("%.3f")], &[FONT])
-        .set_x_range(Fix(0.0069f64), Fix(0.11f64))
+        .set_x_label("Workload factor", &[])
+        .set_y_label("Runtime (s)", &[])
+        .set_y_ticks(Some((Auto, 0)), &[], &[])
+        .set_x_ticks_custom::<_, &str, _, _>(&ticks, &[TickOption::Format("%.3f")], &[])
+        .set_x_range(Fix(0.0069f64), Fix(1.13f64))
         .set_y_range(Fix(0f64), Fix(15f64));
 
     // Collect and plot Abe results
@@ -128,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     //fg.show().unwrap();
-    fg.save_to_svg("plots/server_runtime.svg", 1080, 720)
+    fg.save_to_svg("plots/server_runtime.svg", 560, 350)
         .unwrap();
 
     // And we can draw something in the drawing area

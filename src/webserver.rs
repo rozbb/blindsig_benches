@@ -15,7 +15,7 @@ const SERVER_ADDR: &str = "localhost:23489";
 
 // If a client gets an HTTP 409 from the server, it waits this many milliseconds before
 // reconnecting
-const BACKOFF_TIME: usize = 50;
+const BACKOFF_TIME: u64 = 50;
 
 type ServerFunc = Box<dyn Fn(&rouille::Request) -> rouille::Response + Send + Sync + 'static>;
 pub type ClientFunc = Box<dyn Fn() + Send>;

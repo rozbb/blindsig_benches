@@ -29,7 +29,7 @@ const NUM_CLIENTS: usize = 100;
 
 // Average time between clients connecting. This is modeled as a Poisson point process, and so the
 // time between arrivals is an exponential distribution with λ = 1 / mean_interarrival_time.
-const INTERARRIVAL_TIMES: &[f64] = &[10f64, 50f64, 90f64, 130f64];
+const INTERARRIVAL_TIMES: &[f64] = &[1f64, 10f64, 50f64, 90f64, 130f64];
 
 // 30ms mean latency between server and client (this is roughly what I get on a WiFi network
 // between NYC and msu.edu ). Let's say this is normally distributed with standard deviation of 5ms

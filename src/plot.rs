@@ -25,7 +25,7 @@ struct Estimate {
 }
 
 /// Returns the mean server runtime (in ns) for the benchmark on the given scheme with
-/// threadpool_size many cores and expected interarrival time of eiat
+/// threadpool_size many threads and expected interarrival time of eiat
 fn get_mean_server_runtime(
     scheme: &str,
     threadpool_size: usize,
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect();
 
         // Plot Abe result as a red line with the given point type
-        let line_name = format!("{}-core {}", threadpool_size, ABE_STR);
+        let line_name = format!("{}-thread {}", threadpool_size, ABE_STR);
         plot = plot.lines_points(
             &workload_factors,
             abe_runtimes,
@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     // Plot Schnorr data. This is a blue solid line with square points.
-    let line_name = format!("1-core {}", SCHNORR_STR);
+    let line_name = format!("1-thread {}", SCHNORR_STR);
     plot.lines_points(
         &workload_factors,
         schnorr_runtimes,

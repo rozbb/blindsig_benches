@@ -244,7 +244,7 @@ impl FourMoveBlindSig for Abe {
         h == ω.0 + δ.0
     }
 
-    fn server1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerState, ServerResp1) {
+    fn sign1<R: RngCore + CryptoRng>(rng: &mut R, pubkey: &Pubkey) -> (ServerState, ServerResp1) {
         let Pubkey { z, .. } = pubkey;
 
         // rnd ← {0,1}*
@@ -276,7 +276,7 @@ impl FourMoveBlindSig for Abe {
         (state, resp)
     }
 
-    fn client1<R: RngCore + CryptoRng>(
+    fn user1<R: RngCore + CryptoRng>(
         rng: &mut R,
         pubkey: &Pubkey,
         m: &[u8],
@@ -351,7 +351,7 @@ impl FourMoveBlindSig for Abe {
         (state, resp)
     }
 
-    fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
+    fn sign2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
         let Privkey(x) = privkey;
         let ServerState { u, s1, s2, d } = state;
         let ClientResp(e) = client_resp;
@@ -370,7 +370,7 @@ impl FourMoveBlindSig for Abe {
         }
     }
 
-    fn client2(
+    fn user2(
         pubkey: &Pubkey,
         state: &ClientState,
         m: &[u8],
@@ -430,10 +430,10 @@ fn test_correctness() {
     type Alg = Abe;
 
     let (privkey, pubkey) = Alg::keygen(&mut csprng);
-    let (server_state, server_resp1) = Alg::server1(&mut csprng, &pubkey);
-    let (client_state, client_resp) = Alg::client1(&mut csprng, &pubkey, m, &server_resp1);
-    let server_resp2 = Alg::server2(&privkey, &server_state, &client_resp);
-    let sig = Alg::client2(&pubkey, &client_state, m, &server_resp2).unwrap();
+    let (server_state, server_resp1) = Alg::sign1(&mut csprng, &pubkey);
+    let (client_state, client_resp) = Alg::user1(&mut csprng, &pubkey, m, &server_resp1);
+    let server_resp2 = Alg::sign2(&privkey, &server_state, &client_resp);
+    let sig = Alg::user2(&pubkey, &client_state, m, &server_resp2).unwrap();
 
     assert!(Alg::verify(&pubkey, m, &sig));
 }

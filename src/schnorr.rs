@@ -137,10 +137,7 @@ impl FourMoveBlindSig for BlindSchnorr {
         s_primeG == R_prime.0 + c_prime * X.0
     }
 
-    fn server1<R: RngCore + CryptoRng>(
-        rng: &mut R,
-        _pubkey: &Pubkey,
-    ) -> (ServerState, ServerResp1) {
+    fn sign1<R: RngCore + CryptoRng>(rng: &mut R, _pubkey: &Pubkey) -> (ServerState, ServerResp1) {
         // Generating a commitment is actually identical in functionality to keygen()
         // r ← S, R := rG
         let (r, R) = Self::keygen(rng);
@@ -151,7 +148,7 @@ impl FourMoveBlindSig for BlindSchnorr {
         (state, resp)
     }
 
-    fn client1<R: RngCore + CryptoRng>(
+    fn user1<R: RngCore + CryptoRng>(
         rng: &mut R,
         pubkey: &Pubkey,
         m: &[u8],
@@ -185,7 +182,7 @@ impl FourMoveBlindSig for BlindSchnorr {
         (state, resp)
     }
 
-    fn server2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
+    fn sign2(privkey: &Privkey, state: &ServerState, client_resp: &ClientResp) -> ServerResp2 {
         let Privkey(x) = privkey;
         let ServerState { r } = state;
         let ClientResp { c } = client_resp;
@@ -194,7 +191,7 @@ impl FourMoveBlindSig for BlindSchnorr {
         ServerResp2 { s }
     }
 
-    fn client2(
+    fn user2(
         pubkey: &Pubkey,
         state: &ClientState,
         _m: &[u8],
@@ -223,10 +220,10 @@ fn test_correctness() {
     type Alg = BlindSchnorr;
 
     let (privkey, pubkey) = Alg::keygen(&mut csprng);
-    let (server_state, server_resp1) = Alg::server1(&mut csprng, &pubkey);
-    let (client_state, client_resp) = Alg::client1(&mut csprng, &pubkey, m, &server_resp1);
-    let server_resp2 = Alg::server2(&privkey, &server_state, &client_resp);
-    let sig = Alg::client2(&pubkey, &client_state, m, &server_resp2).unwrap();
+    let (server_state, server_resp1) = Alg::sign1(&mut csprng, &pubkey);
+    let (client_state, client_resp) = Alg::user1(&mut csprng, &pubkey, m, &server_resp1);
+    let server_resp2 = Alg::sign2(&privkey, &server_state, &client_resp);
+    let sig = Alg::user2(&pubkey, &client_state, m, &server_resp2).unwrap();
 
     assert!(Alg::verify(&pubkey, m, &sig));
 }

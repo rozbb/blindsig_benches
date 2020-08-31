@@ -1,5 +1,13 @@
 # Blind Signature Scheme Benchmarks
 
+## Run tests
+
+```
+cargo +nightly test -- --test-threads=1
+```
+
+The `--test-threads=1` part is so that the webserver tests don't step on each others' toes.
+
 ## Run the benchmark
 
 ```
@@ -23,3 +31,7 @@ cargo +nightly run plot
 ```
 
 This will generate `plots/server_runtime.svg`
+
+## If you're getting "Connection Refused" errors
+
+I get these on my laptop, when the benchmarks tend to be slower. Try increasing the `CLIENT_BACKOFF_TIME` in `src/webserver.rs` to something larger. That normally fixes it for me.

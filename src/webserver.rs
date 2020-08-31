@@ -11,11 +11,9 @@ use std::{
 use dashmap::DashMap;
 use rand::{distributions::Distribution, Rng};
 
-const SERVER_ADDR: &str = "localhost:23489";
-
 // If a client gets an HTTP 409 from the server, it waits this many milliseconds before
 // reconnecting
-const BACKOFF_TIME: u64 = 50;
+const CLIENT_BACKOFF_TIME: u64 = 75;
 
 type ServerFunc = Box<dyn Fn(&rouille::Request) -> rouille::Response + Send + Sync + 'static>;
 pub type ClientFunc = Box<dyn Fn() + Send>;
@@ -56,18 +54,18 @@ where
         }
 
         let res = match req.url().as_ref() {
-            "/server1" => {
-                let (server_state, server_resp1) = S::server1(&mut csprng, &pubkey);
+            "/sign1" => {
+                let (server_state, server_resp1) = S::sign1(&mut csprng, &pubkey);
 
                 global_state.insert(client_id, server_state);
                 Response::json(&server_resp1)
             }
-            "/server2" => {
+            "/sign2" => {
                 let server_state = global_state
                     .get(&client_id)
                     .expect("missing server state for this client_id");
                 let client_resp: S::ClientResp = try_or_400!(json_input(req));
-                let server_resp2 = S::server2(&privkey, &server_state, &client_resp);
+                let server_resp2 = S::sign2(&privkey, &server_state, &client_resp);
 
                 drop(server_state);
                 global_state
@@ -103,13 +101,13 @@ pub fn make_client<S: FourMoveBlindSig>(addr: &'static str, pubkey: S::Pubkey) -
         // Do step 1. Loop until the request is accepted
         let server_resp1: S::ServerResp1 = loop {
             let res = Client::new()
-                .get(&format!("http://{}/server1", addr))
+                .get(&format!("http://{}/sign1", addr))
                 .header("client_id", &client_id)
                 .send()
-                .expect("didn't get server1 response");
+                .expect("didn't get sign1 response");
             if res.status() == reqwest::StatusCode::from_u16(409).unwrap() {
                 // Server's busy. Back off for some time before trying again
-                sleep(Duration::from_millis(BACKOFF_TIME));
+                sleep(Duration::from_millis(CLIENT_BACKOFF_TIME));
                 continue;
             } else {
                 let resp = res.json().expect("invalid ServerResp1");
@@ -118,24 +116,24 @@ pub fn make_client<S: FourMoveBlindSig>(addr: &'static str, pubkey: S::Pubkey) -
         };
 
         // Do step 2. Loop until the request is accepted
-        let (client_state, client_resp) = S::client1(&mut csprng, &pubkey, m, &server_resp1);
+        let (client_state, client_resp) = S::user1(&mut csprng, &pubkey, m, &server_resp1);
         let server_resp2: S::ServerResp2 = loop {
             let res = Client::new()
-                .get(&format!("http://{}/server2", addr))
+                .get(&format!("http://{}/sign2", addr))
                 .header("client_id", &client_id)
                 .json(&client_resp)
                 .send()
-                .expect("didn't get server2 response");
+                .expect("didn't get sign2 response");
             if res.status() == reqwest::StatusCode::from_u16(409).unwrap() {
                 // Server's busy. Back off for some time before trying again
-                sleep(Duration::from_millis(BACKOFF_TIME));
+                sleep(Duration::from_millis(CLIENT_BACKOFF_TIME));
                 continue;
             } else {
                 let resp = res.json().expect("invalid ServerResp2");
                 break resp;
             }
         };
-        let sig = S::client2(&pubkey, &client_state, m, &server_resp2).unwrap();
+        let sig = S::user2(&pubkey, &client_state, m, &server_resp2).unwrap();
 
         assert!(S::verify(&pubkey, m, &sig));
     };
@@ -171,24 +169,35 @@ where
     (privkey, pubkey, stop_var_copy)
 }
 
+#[cfg(test)]
 fn test_webserver<S: FourMoveBlindSig>() {
+    let server_addr = "localhost:23489";
+    // Make a global server state for all the cores to run with
     let my_global_state: Arc<DashMap<String, <S as FourMoveBlindSig>::ServerState>> =
         Arc::new(DashMap::new());
 
+    // Make an arbitrary latency ditribution (this one is μ = 50ms, σ = 10ms), and start the server
+    // with that latency distribution and 1 thread in the threadpool
     let latency_distr = rand_distr::Normal::new(50f64, 10f64).unwrap();
     let (_privkey, pubkey, stop_var) =
-        start_server::<S, _>(SERVER_ADDR, 1, my_global_state, latency_distr);
+        start_server::<S, _>(server_addr, 1, my_global_state, latency_distr);
 
+    // Let the server start up for a second
+    sleep(Duration::from_secs(1));
+
+    // Make 10 clients connect to the server
     let mut threads = Vec::new();
     for _ in 0..10 {
-        let client = make_client::<S>(SERVER_ADDR, pubkey.clone());
+        let client = make_client::<S>(server_addr, pubkey.clone());
         threads.push(std::thread::spawn(client));
     }
 
+    // Wait for all the clients finish
     for thread in threads.into_iter() {
         thread.join().unwrap();
     }
 
+    // Kill the server
     stop_var.store(true, SeqCst);
 }
 

@@ -93,22 +93,22 @@ pub trait FourMoveBlindSig {
     fn keygen<R: RngCore + CryptoRng>(rng: &mut R) -> (Self::Privkey, Self::Pubkey);
     fn verify(pubkey: &Self::Pubkey, m: &[u8], sig: &Self::Signature) -> bool;
 
-    fn server1<R: RngCore + CryptoRng>(
+    fn sign1<R: RngCore + CryptoRng>(
         rng: &mut R,
         pubkey: &Self::Pubkey,
     ) -> (Self::ServerState, Self::ServerResp1);
-    fn client1<R: RngCore + CryptoRng>(
+    fn user1<R: RngCore + CryptoRng>(
         rng: &mut R,
         pubkey: &Self::Pubkey,
         m: &[u8],
         server_resp1: &Self::ServerResp1,
     ) -> (Self::ClientState, Self::ClientResp);
-    fn server2(
+    fn sign2(
         privkey: &Self::Privkey,
         state: &Self::ServerState,
         client_resp: &Self::ClientResp,
     ) -> Self::ServerResp2;
-    fn client2(
+    fn user2(
         pubkey: &Self::Pubkey,
         state: &Self::ClientState,
         m: &[u8],
